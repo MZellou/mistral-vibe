@@ -16,6 +16,7 @@ Each todo item has:
 
 **Use proactively for:**
 - Complex multi-step tasks (3+ distinct steps)
+- **Plan Mode**: To structure the plan before validation and execution.
 - Non-trivial tasks requiring careful planning
 - Multiple tasks provided by the user (numbered or comma-separated)
 - Tracking progress on ongoing work
@@ -47,6 +48,10 @@ Each todo item has:
    - Break complex tasks into manageable steps
    - Use clear, descriptive task names
    - Remove irrelevant tasks entirely (don't just mark cancelled)
+
+4. **Plan Validation:**
+   - Before starting execution of a complex plan, ensure the plan is fully listed in the todos.
+   - Use `ask_user` to validate this list before marking the first item as `in_progress`.
 
 ## Examples
 

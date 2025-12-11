@@ -11,6 +11,11 @@ from typing import Any, ClassVar, cast, get_args, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vibe.core.config import VibeConfig
+
 ARGS_COUNT = 4
 
 
@@ -59,12 +64,16 @@ class BaseToolConfig(BaseModel):
         workdir: The working directory for the tool. If None, the current working directory is used.
         allowlist: Patterns that automatically allow tool execution.
         denylist: Patterns that automatically deny tool execution.
+        _vibe_config: Internal reference to full VibeConfig (injected by ToolManager).
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     permission: ToolPermission = ToolPermission.ASK
     workdir: Path | None = Field(default=None, exclude=True)
     allowlist: list[str] = Field(default_factory=list)
     denylist: list[str] = Field(default_factory=list)
+    vibe_config: "VibeConfig | None" = Field(default=None, exclude=True)
 
     @field_validator("workdir", mode="before")
     @classmethod

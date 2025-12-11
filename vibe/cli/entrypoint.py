@@ -246,7 +246,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             run_textual_ui(
                 config,
                 auto_approve=args.auto_approve,
-                enable_streaming=True,
+                enable_streaming=config.enable_streaming,
                 initial_prompt=args.initial_prompt or stdin_prompt,
                 loaded_messages=loaded_messages,
                 session_info=session_info,

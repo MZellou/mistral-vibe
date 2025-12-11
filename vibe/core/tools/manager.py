@@ -248,6 +248,9 @@ class ToolManager:
         if self._config.workdir is not None:
             merged_dict["workdir"] = self._config.workdir
 
+        # Inject full VibeConfig for tools that need it
+        merged_dict["_vibe_config"] = self._config
+
         return config_class.model_validate(merged_dict)
 
     def get(self, tool_name: str) -> BaseTool:

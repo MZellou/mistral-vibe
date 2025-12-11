@@ -309,6 +309,7 @@ class VibeConfig(BaseSettings):
     include_project_context: bool = True
     include_prompt_detail: bool = True
     enable_update_checks: bool = True
+    enable_streaming: bool = True
     api_timeout: float = 720.0
     providers: list[ProviderConfig] = Field(
         default_factory=lambda: list(DEFAULT_PROVIDERS)
@@ -375,6 +376,20 @@ class VibeConfig(BaseSettings):
         raise ValueError(
             f"Active model '{self.active_model}' not found in configuration."
         )
+
+    def get_model_by_alias(self, alias: str) -> ModelConfig:
+        """Get a model by its alias."""
+        for model in self.models:
+            if model.alias == alias:
+                return model
+        raise ValueError(f"Model with alias '{alias}' not found in configuration.")
+
+    def get_model_by_name(self, name: str) -> ModelConfig:
+        """Get a model by its name."""
+        for model in self.models:
+            if model.name == name:
+                return model
+        raise ValueError(f"Model with name '{name}' not found in configuration.")
 
     def get_provider_for_model(self, model: ModelConfig) -> ProviderConfig:
         for provider in self.providers:
@@ -564,3 +579,5 @@ class VibeConfig(BaseSettings):
             config_dict["tools"] = tool_defaults
 
         return config_dict
+
+BaseToolConfig.model_rebuild()
