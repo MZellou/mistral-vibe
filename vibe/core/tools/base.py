@@ -67,7 +67,7 @@ class BaseToolConfig(BaseModel):
         _vibe_config: Internal reference to full VibeConfig (injected by ToolManager).
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     permission: ToolPermission = ToolPermission.ASK
     workdir: Path | None = Field(default=None, exclude=True)
