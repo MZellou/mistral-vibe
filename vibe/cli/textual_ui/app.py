@@ -41,6 +41,7 @@ from vibe.cli.update_notifier import (
     is_version_update_available,
 )
 from vibe.cli.update_notifier.version_update_gateway import VersionUpdateGateway
+from vibe.acp.utils import VibeSessionMode
 from vibe.core import __version__ as CORE_VERSION
 from vibe.core.agent import Agent
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
@@ -60,6 +61,7 @@ class BottomApp(StrEnum):
     Approval = auto()
     Config = auto()
     Input = auto()
+    AskUser = auto()
 
 
 class VibeApp(App):
@@ -88,7 +90,12 @@ class VibeApp(App):
     ) -> None:
         super().__init__(**kwargs)
         self.config = config
-        self.auto_approve = auto_approve
+        # Convert auto_approve to mode for internal use
+        self.mode = (
+            VibeSessionMode.AUTO_APPROVE
+            if auto_approve
+            else VibeSessionMode.APPROVAL_REQUIRED
+        )
         self.enable_streaming = enable_streaming
         self.agent: Agent | None = None
         self._agent_running = False
@@ -98,6 +105,7 @@ class VibeApp(App):
 
         self._loading_widget: LoadingWidget | None = None
         self._pending_approval: asyncio.Future | None = None
+        self._pending_ask_user: asyncio.Future | None = None
 
         self.event_handler: EventHandler | None = None
         self.commands = CommandRegistry()
@@ -134,7 +142,7 @@ class VibeApp(App):
 
         with Horizontal(id="loading-area"):
             yield Static(id="loading-area-content")
-            yield ModeIndicator(auto_approve=self.auto_approve)
+            yield ModeIndicator(mode=self.mode)
 
         yield Static(id="todo-area")
 
@@ -143,7 +151,7 @@ class VibeApp(App):
                 history_file=self.history_file,
                 command_registry=self.commands,
                 id="input-container",
-                show_warning=self.auto_approve,
+                show_warning=(self.mode == VibeSessionMode.AUTO_APPROVE),
             )
 
         with Horizontal(id="bottom-bar"):
@@ -245,6 +253,15 @@ class VibeApp(App):
 
         if self._loading_widget and self._loading_widget.parent:
             await self._remove_loading_widget()
+
+    async def on_ask_user_app_response_submitted(
+        self, message: Any
+    ) -> None:
+        """Handle user's response to ask_user question."""
+        if self._pending_ask_user and not self._pending_ask_user.done():
+            self._pending_ask_user.set_result(message.response)
+
+        await self._switch_to_input_app()
 
     async def _remove_loading_widget(self) -> None:
         if self._loading_widget and self._loading_widget.parent:
@@ -411,11 +428,11 @@ class VibeApp(App):
         try:
             agent = Agent(
                 self.config,
-                auto_approve=self.auto_approve,
+                mode=self.mode,
                 enable_streaming=self.enable_streaming,
             )
 
-            if not self.auto_approve:
+            if self.mode != VibeSessionMode.AUTO_APPROVE:
                 agent.approval_callback = self._approval_callback
 
             if self._loaded_messages:
@@ -428,6 +445,11 @@ class VibeApp(App):
                 logger.info(
                     "Loaded %d messages from previous session", len(non_system_messages)
                 )
+
+            # Inject ask_user callback
+            if "ask_user" in agent.tool_manager._available:
+                ask_user_tool = agent.tool_manager.get("ask_user")
+                ask_user_tool.config.interaction_callback = self._ask_user_callback
 
             self.agent = agent
         except asyncio.CancelledError:
@@ -465,6 +487,16 @@ class VibeApp(App):
         await self._switch_to_approval_app(tool, args)
         result = await self._pending_approval
         self._pending_approval = None
+        return result
+
+    async def _ask_user_callback(
+        self, question: str, options: list[str] | None
+    ) -> str:
+        """Callback for ask_user tool to capture user responses interactively."""
+        self._pending_ask_user = asyncio.Future()
+        await self._switch_to_ask_user_app(question, options)
+        result = await self._pending_ask_user
+        self._pending_ask_user = None
         return result
 
     async def _handle_agent_turn(self, prompt: str) -> None:
@@ -551,6 +583,11 @@ class VibeApp(App):
         if self.event_handler:
             self.event_handler.stop_current_tool_call()
             self.event_handler.stop_current_compact()
+
+        # Cancel pending ask_user if active
+        if self._pending_ask_user and not self._pending_ask_user.done():
+            self._pending_ask_user.cancel()
+            self._pending_ask_user = None
 
         self._agent_running = False
         loading_area = self.query_one("#loading-area-content")
@@ -745,6 +782,114 @@ class VibeApp(App):
             compact_msg.set_error(str(e))
             self.event_handler.current_compact = None
 
+    async def _set_tool_model(self) -> None:
+        """Set model for specific tools."""
+        if not self.agent:
+            await self._mount_and_scroll(
+                ErrorMessage("Agent not initialized", collapsed=self._tools_collapsed)
+            )
+            return
+
+        # Get available models
+        available_models = {model.alias: model for model in self.config.models}
+        if not available_models:
+            await self._mount_and_scroll(
+                ErrorMessage("No models available", collapsed=self._tools_collapsed)
+            )
+            return
+
+        # Get available tools
+        available_tools = self.agent.tool_manager.get_available_tools()
+        if not available_tools:
+            await self._mount_and_scroll(
+                ErrorMessage("No tools available", collapsed=self._tools_collapsed)
+            )
+            return
+
+        # Create a simple UI for selecting tool and model
+        from textual.app import ComposeResult
+        from textual.widgets import Select, Button, Label
+        from textual.containers import Vertical
+
+        class ToolModelSelector(Vertical):
+            def __init__(self, tools: list[str], models: list[str], on_select: callable):
+                super().__init__()
+                self.tools = tools
+                self.models = models
+                self.on_select = on_select
+
+            def compose(self) -> ComposeResult:
+                yield Label("Select tool and model:", classes="tool-model-label")
+                yield Label("")
+                
+                yield Label("Tool:", classes="tool-model-sublabel")
+                tool_select = Select([(tool, tool) for tool in self.tools])
+                tool_select.add_class("tool-model-select")
+                yield tool_select
+                
+                yield Label("Model:", classes="tool-model-sublabel")
+                model_select = Select([(model, model) for model in self.models])
+                model_select.add_class("tool-model-select")
+                yield model_select
+                
+                yield Label("")
+                button = Button("Set Model", variant="primary")
+                button.add_class("tool-model-button")
+                yield button
+
+            async def on_button_pressed(self, event: Button.Pressed) -> None:
+                tool_select = self.query_one(Select)
+                model_select = self.query_one(Select, Select)
+                
+                tool_name = tool_select.value
+                model_alias = model_select.value
+                
+                if tool_name and model_alias:
+                    await self.on_select(tool_name, model_alias)
+
+        async def handle_selection(tool_name: str, model_alias: str):
+            try:
+                # Update tool configuration
+                tool_config = self.agent.tool_manager.get_tool_config(tool_name)
+                if tool_config:
+                    tool_config.model = model_alias
+                    
+                    # Save the configuration
+                    self.config.tools[tool_name] = tool_config.model_dump(exclude_none=True)
+                    self.config.save()
+                    
+                    await self._mount_and_scroll(
+                        UserCommandMessage(
+                            f"Set model '{model_alias}' for tool '{tool_name}'"
+                        )
+                    )
+                else:
+                    await self._mount_and_scroll(
+                        ErrorMessage(
+                            f"Tool '{tool_name}' not found", collapsed=self._tools_collapsed
+                        )
+                    )
+            except Exception as e:
+                await self._mount_and_scroll(
+                    ErrorMessage(
+                        f"Failed to set tool model: {e}", collapsed=self._tools_collapsed
+                    )
+                )
+
+        # Show the selector
+        selector = ToolModelSelector(
+            tools=[tool.name for tool in available_tools],
+            models=list(available_models.keys()),
+            on_select=handle_selection
+        )
+        
+        # Add some CSS classes for styling
+        selector.add_class("tool-model-selector")
+        
+        # Mount the selector
+        await self.mount(selector)
+        selector.scroll_visible()
+
     async def _exit_app(self) -> None:
         self.exit()
 
@@ -794,6 +939,30 @@ class VibeApp(App):
         self.call_after_refresh(approval_app.focus)
         self.call_after_refresh(self._scroll_to_bottom)
 
+    async def _switch_to_ask_user_app(
+        self, question: str, options: list[str] | None
+    ) -> None:
+        """Switch to the ask_user interactive app."""
+        bottom_container = self.query_one("#bottom-app-container")
+
+        try:
+            chat_input_container = self.query_one(ChatInputContainer)
+            await chat_input_container.remove()
+        except Exception:
+            pass
+
+        if self._mode_indicator:
+            self._mode_indicator.display = False
+
+        from vibe.cli.textual_ui.widgets.ask_user_app import AskUserApp
+
+        ask_user_app = AskUserApp(question=question, options=options)
+        await bottom_container.mount(ask_user_app)
+        self._current_bottom_app = BottomApp.AskUser
+
+        self.call_after_refresh(ask_user_app.focus)
+        self.call_after_refresh(self._scroll_to_bottom)
+
     async def _switch_to_input_app(self) -> None:
         bottom_container = self.query_one("#bottom-app-container")
 
@@ -806,6 +975,12 @@ class VibeApp(App):
         try:
             approval_app = self.query_one("#approval-app")
             await approval_app.remove()
+        except Exception:
+            pass
+
+        try:
+            ask_user_app = self.query_one("#ask-user-app")
+            await ask_user_app.remove()
         except Exception:
             pass
 
@@ -825,7 +1000,7 @@ class VibeApp(App):
             history_file=self.history_file,
             command_registry=self.commands,
             id="input-container",
-            show_warning=self.auto_approve,
+            show_warning=(self.mode == VibeSessionMode.AUTO_APPROVE),
         )
         await bottom_container.mount(chat_input_container)
         self._chat_input_container = chat_input_container
@@ -924,18 +1099,28 @@ class VibeApp(App):
         if self._current_bottom_app != BottomApp.Input:
             return
 
-        self.auto_approve = not self.auto_approve
+        # Cycle: APPROVAL_REQUIRED → AUTO_APPROVE → PLAN → APPROVAL_REQUIRED
+        match self.mode:
+            case VibeSessionMode.APPROVAL_REQUIRED:
+                self.mode = VibeSessionMode.AUTO_APPROVE
+            case VibeSessionMode.AUTO_APPROVE:
+                self.mode = VibeSessionMode.PLAN
+            case VibeSessionMode.PLAN:
+                self.mode = VibeSessionMode.APPROVAL_REQUIRED
 
+        # Update UI
         if self._mode_indicator:
-            self._mode_indicator.set_auto_approve(self.auto_approve)
+            self._mode_indicator.set_mode(self.mode)
 
         if self._chat_input_container:
-            self._chat_input_container.set_show_warning(self.auto_approve)
+            is_auto_approve = (self.mode == VibeSessionMode.AUTO_APPROVE)
+            self._chat_input_container.set_show_warning(is_auto_approve)
 
+        # Update agent
         if self.agent:
-            self.agent.auto_approve = self.auto_approve
+            self.agent.mode = self.mode
 
-            if self.auto_approve:
+            if self.mode == VibeSessionMode.AUTO_APPROVE:
                 self.agent.approval_callback = None
             else:
                 self.agent.approval_callback = self._approval_callback

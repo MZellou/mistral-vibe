@@ -7,6 +7,9 @@ if TYPE_CHECKING:
     from vibe.core.tools.ui import ToolResultDisplay
 
 from vibe.cli.textual_ui.widgets.tool_widgets import (
+    AskUserApprovalWidget,
+    AskUserResultWidget,
+    InteractiveAskUserWidget,
     BashApprovalWidget,
     BashResultWidget,
     GrepApprovalWidget,
@@ -201,6 +204,28 @@ class GrepRenderer(ToolRenderer):
         return GrepResultWidget, data
 
 
+class AskUserRenderer(ToolRenderer):
+    def get_approval_widget(
+        self, tool_args: dict
+    ) -> tuple[type[InteractiveAskUserWidget], dict[str, Any]]:
+        data = {
+            "question": tool_args.get("question", ""),
+            "options": tool_args.get("options", []),
+        }
+        return InteractiveAskUserWidget, data
+
+    def get_result_widget(
+        self, display: ToolResultDisplay, collapsed: bool
+    ) -> tuple[type[AskUserResultWidget], dict[str, Any]]:
+        data = {
+            "success": display.success,
+            "message": display.message,
+            "question": display.details.get("question", ""),
+            "options": display.details.get("options", []),
+        }
+        return AskUserResultWidget, data
+
+
 _RENDERER_REGISTRY: dict[str, type[ToolRenderer]] = {
     "write_file": WriteFileRenderer,
     "search_replace": SearchReplaceRenderer,
@@ -208,6 +233,7 @@ _RENDERER_REGISTRY: dict[str, type[ToolRenderer]] = {
     "read_file": ReadFileRenderer,
     "bash": BashRenderer,
     "grep": GrepRenderer,
+    "ask_user": AskUserRenderer,
 }
 
 

@@ -540,6 +540,11 @@ class VibeConfig(BaseSettings):
         with CONFIG_FILE.open("wb") as f:
             tomli_w.dump(config, f)
 
+    def save(self) -> None:
+        """Save the current configuration to disk."""
+        config_dict = self.model_dump(exclude_none=True, fallback=str)
+        self.dump_config(config_dict)
+
     @classmethod
     def _get_agent_config(cls, agent: str | None) -> dict[str, Any] | None:
         if agent is None:

@@ -51,6 +51,11 @@ class CommandRegistry:
                 description="Compact conversation history by summarizing",
                 handler="_compact_history",
             ),
+            "toolmodel": Command(
+                aliases=frozenset(["/toolmodel", "/tm"]),
+                description="Set model for specific tools",
+                handler="_set_tool_model",
+            ),
             "exit": Command(
                 aliases=frozenset(["/exit", "/quit", "/q"]),
                 description="Exit the application",

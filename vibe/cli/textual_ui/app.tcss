@@ -640,6 +640,151 @@ WelcomeBanner {
     padding: 1;
 }
 
+/* Ask User App Styles */
+#ask-user-app {
+    width: 100%;
+    height: auto;
+    max-height: 20;
+    background: $background;
+    border: round $foreground-muted;
+    padding: 0 1;
+    margin: 0 2 1 2;
+}
+
+#ask-user-content {
+    width: 100%;
+    height: auto;
+}
+
+.ask-user-app-title {
+    height: auto;
+    text-style: bold;
+    color: $accent;
+}
+
+.ask-user-app-question {
+    height: auto;
+    color: $text;
+    margin: 1 0;
+}
+
+.ask-user-app-options-header {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.ask-user-app-option {
+    height: auto;
+    color: $text;
+}
+
+.ask-user-app-option-selected {
+    height: auto;
+    color: $accent;
+    text-style: bold;
+}
+
+.ask-user-app-input {
+    border: solid $primary;
+    margin: 1 0;
+}
+
+.ask-user-app-help {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* Ask User Result Display Styles */
+.ask-user-response-header {
+    height: auto;
+    color: $accent;
+    text-style: bold;
+}
+
+.ask-user-response {
+    height: auto;
+    color: $text;
+    padding-left: 2;
+}
+
+.ask-user-header {
+    height: auto;
+    color: $primary;
+    text-style: bold;
+}
+
+.ask-user-question {
+    height: auto;
+    color: $foreground;
+    padding-left: 2;
+}
+
+.ask-user-options-header {
+    height: auto;
+    color: $primary;
+    text-style: bold;
+}
+
+.ask-user-option {
+    height: auto;
+    color: $foreground;
+    padding-left: 4;
+}
+
+.ask-user-message {
+    height: auto;
+    color: $text-muted;
+    padding-left: 2;
+}
+
+.ask-user-option-selected {
+    height: auto;
+    color: $primary;
+    text-style: bold;
+    background: $surface;
+}
+
+.interactive-ask-user {
+    width: 100%;
+    height: auto;
+}
+
+.tool-model-selector {
+    width: 100%;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: round $foreground-muted;
+    margin: 1 0;
+}
+
+.tool-model-label {
+    width: 100%;
+    height: auto;
+    color: $primary;
+    text-style: bold;
+}
+
+.tool-model-sublabel {
+    width: 100%;
+    height: auto;
+    color: $foreground;
+    text-style: bold;
+}
+
+.tool-model-select {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.tool-model-button {
+    width: 100%;
+    height: auto;
+}
+
 Horizontal {
     width: 100%;
     height: auto;
@@ -660,6 +805,10 @@ ModeIndicator {
 
     &.mode-off {
         color: $text-muted;
+    }
+
+    &.mode-plan {
+        color: $accent;
     }
 }
 

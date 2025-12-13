@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.events import Key
+from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 
@@ -305,3 +307,114 @@ class GrepResultWidget(ToolResultWidget):
                 yield Markdown(f"```\n{truncated_content}\n```")
             else:
                 yield Markdown(f"```\n{matches}\n```")
+
+
+class AskUserApprovalWidget(ToolApprovalWidget):
+    def compose(self) -> ComposeResult:
+        question = self.data.get("question", "")
+        options = self.data.get("options", [])
+
+        yield Static("🤖 AI Question:", classes="ask-user-header", markup=False)
+        yield Static("")
+        yield Static(question, classes="ask-user-question", markup=False)
+        
+        if options:
+            yield Static("")
+            yield Static("Options:", classes="ask-user-options-header", markup=False)
+            # Add "Type something" option
+            all_options = options + ["Type something..."]
+            for i, option in enumerate(all_options, 1):
+                yield Static(f"{i}. {option}", classes="ask-user-option", markup=False)
+
+
+class AskUserResultWidget(ToolResultWidget):
+    def compose(self) -> ComposeResult:
+        question = self.data.get("question", "")
+        options = self.data.get("options", [])
+        message = self.data.get("message", "")
+        user_response = self.data.get("user_response")
+
+        if self.collapsed:
+            yield Static(f"Question asked: {question[:50]}... (ctrl+o to expand.)", markup=False)
+        else:
+            yield Static("🤖 AI Question:", classes="ask-user-header", markup=False)
+            yield Static("")
+            yield Static(question, classes="ask-user-question", markup=False)
+
+            if options:
+                yield Static("")
+                yield Static("Options:", classes="ask-user-options-header", markup=False)
+                for i, option in enumerate(options, 1):
+                    yield Static(f"{i}. {option}", classes="ask-user-option", markup=False)
+
+            if user_response:
+                yield Static("")
+                yield Static("✓ User Response:", classes="ask-user-response-header", markup=False)
+                yield Static(user_response, classes="ask-user-response", markup=False)
+
+            if message:
+                yield Static("")
+                yield Static(message, classes="ask-user-message", markup=False)
+
+
+class InteractiveAskUserWidget(Widget):
+    """Interactive widget for ask_user with keyboard navigation and free-text input."""
+    
+    def __init__(self, question: str, options: list[str], on_select: callable):
+        super().__init__()
+        self.question = question
+        self.options = options + ["Type something..."]  # Add free-text option
+        self.selected_index = 0
+        self.on_select = on_select
+        self.add_class("interactive-ask-user")
+    
+    def compose(self) -> ComposeResult:
+        yield Static("🤖 AI Question:", classes="ask-user-header", markup=False)
+        yield Static("")
+        yield Static(self.question, classes="ask-user-question", markup=False)
+        yield Static("")
+        yield Static("Options:", classes="ask-user-options-header", markup=False)
+        
+        # Create option widgets
+        for i, option in enumerate(self.options):
+            option_widget = Static(f"{i+1}. {option}", classes="ask-user-option", markup=False)
+            if i == self.selected_index:
+                option_widget.add_class("ask-user-option-selected")
+            setattr(self, f"option_{i}", option_widget)
+            yield option_widget
+    
+    async def on_key(self, event: Key) -> None:
+        if event.key == "up":
+            self._select_previous()
+            event.prevent_default()
+        elif event.key == "down":
+            self._select_next()
+            event.prevent_default()
+        elif event.key == "enter":
+            await self._handle_selection()
+            event.prevent_default()
+    
+    def _select_previous(self):
+        if self.selected_index > 0:
+            self.selected_index -= 1
+            self._update_selection()
+    
+    def _select_next(self):
+        if self.selected_index < len(self.options) - 1:
+            self.selected_index += 1
+            self._update_selection()
+    
+    def _update_selection(self):
+        for i, option in enumerate(self.options):
+            option_widget = getattr(self, f"option_{i}")
+            option_widget.remove_class("ask-user-option-selected")
+            if i == self.selected_index:
+                option_widget.add_class("ask-user-option-selected")
+    
+    async def _handle_selection(self):
+        selected_option = self.options[self.selected_index]
+        if selected_option == "Type something...":
+            # Handle free-text input
+            await self.on_select("free_text")
+        else:
+            await self.on_select(selected_option)

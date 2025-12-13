@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from vibe.acp.utils import VibeSessionMode
 from vibe.core.config import VibeConfig
 from vibe.core.interaction_logger import InteractionLogger
 from vibe.core.llm.backend.factory import BACKEND_FACTORY
@@ -83,6 +84,14 @@ class LLMResponseError(AgentError):
     """Raised when LLM response is malformed or missing expected data."""
 
 
+# Outils autorisés en mode Plan (lecture seule)
+READ_ONLY_TOOLS = frozenset({"read_file", "grep", "think", "ask_user", "explore"})
+BASH_READ_ONLY_COMMANDS = frozenset({
+    "ls", "cat", "head", "tail", "pwd", "find",
+    "git status", "git log", "git diff", "git show"
+})
+
+
 class Agent:
     def __init__(
         self,
@@ -93,6 +102,7 @@ class Agent:
         max_price: float | None = None,
         backend: BackendLike | None = None,
         enable_streaming: bool = False,
+        mode: VibeSessionMode | None = None,
     ) -> None:
         self.config = config
 
@@ -124,7 +134,17 @@ class Agent:
         except ValueError:
             pass
 
-        self.auto_approve = auto_approve
+        # Support both mode and auto_approve parameters for compatibility
+        if mode is not None:
+            self.mode = mode
+        else:
+            # Fallback: convert auto_approve to mode
+            self.mode = (
+                VibeSessionMode.AUTO_APPROVE
+                if auto_approve
+                else VibeSessionMode.APPROVAL_REQUIRED
+            )
+
         self.approval_callback: ApprovalCallback | None = None
 
         self.session_id = str(uuid4())
@@ -132,11 +152,25 @@ class Agent:
         self.interaction_logger = InteractionLogger(
             config.session_logging,
             self.session_id,
-            auto_approve,
+            self.mode == VibeSessionMode.AUTO_APPROVE,
             config.effective_workdir,
         )
 
         self._last_chunk: LLMChunk | None = None
+
+    @property
+    def auto_approve(self) -> bool:
+        """Backward compatibility property."""
+        return self.mode == VibeSessionMode.AUTO_APPROVE
+
+    @auto_approve.setter
+    def auto_approve(self, value: bool) -> None:
+        """Backward compatibility setter."""
+        self.mode = (
+            VibeSessionMode.AUTO_APPROVE
+            if value
+            else VibeSessionMode.APPROVAL_REQUIRED
+        )
 
     def _select_backend(self) -> BackendLike:
         active_model = self.config.get_active_model()
@@ -430,6 +464,32 @@ class Agent:
             tokens_per_second=self.stats.tokens_per_second,
         )
 
+    def _is_tool_allowed_in_mode(
+        self, tool_name: str, tool_args: dict
+    ) -> tuple[bool, str | None]:
+        """Check if tool execution is allowed in current mode.
+
+        Returns:
+            (allowed, skip_reason) - allowed is True if tool can execute,
+                                      skip_reason contains error message if not allowed
+        """
+        if self.mode != VibeSessionMode.PLAN:
+            return (True, None)
+
+        # En mode PLAN, seuls les outils lecture seule sont autorisés
+        if tool_name in READ_ONLY_TOOLS:
+            # Traitement spécial pour bash - doit être en lecture seule
+            if tool_name == "bash":
+                command = tool_args.get("command", "").strip()
+                if not any(command.startswith(safe) for safe in BASH_READ_ONLY_COMMANDS):
+                    return (
+                        False,
+                        f"Plan mode: bash command '{command}' is not read-only",
+                    )
+            return (True, None)
+
+        return (False, f"Plan mode: tool '{tool_name}' is write-protected in plan mode")
+
     async def _handle_tool_calls(  # noqa: PLR0915
         self, resolved: ResolvedMessage
     ) -> AsyncGenerator[ToolCallEvent | ToolResultEvent]:
@@ -459,6 +519,26 @@ class Agent:
                 args=tool_call.validated_args,
                 tool_call_id=tool_call_id,
             )
+
+            # Check if tool is allowed in current mode
+            allowed, skip_reason = self._is_tool_allowed_in_mode(
+                tool_call.tool_name, tool_call.validated_args
+            )
+            if not allowed:
+                yield ToolResultEvent(
+                    tool_name=tool_call.tool_name,
+                    tool_class=tool_call.tool_class,
+                    error=skip_reason,
+                    tool_call_id=tool_call_id,
+                )
+                self.messages.append(
+                    LLMMessage.model_validate(
+                        self.format_handler.create_tool_response_message(
+                            tool_call, skip_reason or "Tool not allowed"
+                        )
+                    )
+                )
+                continue
 
             try:
                 tool_instance = self.tool_manager.get(tool_call.tool_name)
@@ -605,13 +685,42 @@ class Agent:
                 )
                 continue
 
-    async def _chat(self, max_tokens: int | None = None) -> LLMChunk:
-        active_model = self.config.get_active_model()
-        provider = self.config.get_provider_for_model(active_model)
+    def _get_model_for_tool(self, tool_name: str) -> ModelConfig:
+        """Get the appropriate model for a specific tool.
+        
+        If the tool has a specific model configured, use that model.
+        Otherwise, use the active model.
+        """
+        try:
+            tool_config = self.tool_manager.get_tool_config(tool_name)
+            if tool_config and tool_config.model:
+                return self.config.get_model_by_alias(tool_config.model)
+        except ValueError:
+            # If the configured model doesn't exist, fall back to active model
+            pass
+        
+        # Use active model as fallback
+        return self.config.get_active_model()
 
+    async def _chat(self, max_tokens: int | None = None) -> LLMChunk:
+        # Get the model based on available tools
         available_tools = self.format_handler.get_available_tools(
             self.tool_manager, self.config
         )
+        
+        # Determine which model to use based on tool configurations
+        model = self.config.get_active_model()
+        for tool in available_tools:
+            tool_config = self.tool_manager.get_tool_config(tool.function.name)
+            if tool_config and tool_config.model:
+                try:
+                    model = self.config.get_model_by_alias(tool_config.model)
+                    break  # Use the first tool with a specific model
+                except ValueError:
+                    continue
+        
+        provider = self.config.get_provider_for_model(model)
+
         tool_choice = self.format_handler.get_tool_choice()
 
         try:
@@ -619,9 +728,9 @@ class Agent:
 
             async with self.backend as backend:
                 result = await backend.complete(
-                    model=active_model,
+                    model=model,
                     messages=self.messages,
-                    temperature=active_model.temperature,
+                    temperature=model.temperature,
                     tools=available_tools,
                     tool_choice=tool_choice,
                     extra_headers={
@@ -658,7 +767,7 @@ class Agent:
 
         except Exception as e:
             raise RuntimeError(
-                f"API error from {provider.name} (model: {active_model.name}): {e}"
+                f"API error from {provider.name} (model: {model.name}): {e}"
             ) from e
 
     async def _chat_streaming(

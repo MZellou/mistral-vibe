@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -26,11 +27,15 @@ class AskUserArgs(BaseModel):
 class AskUserResult(BaseModel):
     question: str
     options: list[str] | None = None
+    user_response: str | None = None
     message: str = "Question asked. Waiting for user response."
 
 
 class AskUserConfig(BaseToolConfig):
     permission: ToolPermission = ToolPermission.ALWAYS
+    interaction_callback: Callable[[str, list[str] | None], Awaitable[str]] | None = (
+        None
+    )
 
 
 class AskUser(
@@ -66,6 +71,8 @@ class AskUser(
         details: dict[str, str | list[str]] = {"question": result.question}
         if result.options:
             details["options"] = result.options
+        if result.user_response:
+            details["user_response"] = result.user_response
 
         return ToolResultDisplay(
             success=True,
@@ -78,9 +85,23 @@ class AskUser(
         return "Asking user"
 
     async def run(self, args: AskUserArgs) -> AskUserResult:
+        # If we have an interactive callback (TUI mode), use it
+        if self.config.interaction_callback:
+            user_response = await self.config.interaction_callback(
+                args.question, args.options
+            )
+            return AskUserResult(
+                question=args.question,
+                options=args.options,
+                user_response=user_response,
+                message=f"User answered: {user_response}",
+            )
+
+        # Non-interactive mode (ACP or programmatic use)
         return AskUserResult(
             question=args.question,
             options=args.options,
+            user_response=None,
             message=f"Question: {args.question}"
             + (f"\nOptions: {', '.join(args.options)}" if args.options else ""),
         )

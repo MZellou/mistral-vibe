@@ -10,13 +10,14 @@ from acp.schema import PermissionOption, SessionMode
 class VibeSessionMode(enum.StrEnum):
     APPROVAL_REQUIRED = enum.auto()
     AUTO_APPROVE = enum.auto()
+    PLAN = enum.auto()
 
     def to_acp_session_mode(self) -> SessionMode:
         match self:
             case self.APPROVAL_REQUIRED:
                 return SessionMode(
                     id=VibeSessionMode.APPROVAL_REQUIRED,
-                    name="Approval Required",
+                    name="Normal Mode",
                     description="Requires user approval for tool executions",
                 )
             case self.AUTO_APPROVE:
@@ -24,6 +25,12 @@ class VibeSessionMode(enum.StrEnum):
                     id=VibeSessionMode.AUTO_APPROVE,
                     name="Auto Approve",
                     description="Automatically approves all tool executions",
+                )
+            case self.PLAN:
+                return SessionMode(
+                    id=VibeSessionMode.PLAN,
+                    name="Plan Mode",
+                    description="Read-only mode for code exploration and planning",
                 )
 
     @classmethod

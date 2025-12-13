@@ -64,6 +64,7 @@ class BaseToolConfig(BaseModel):
         workdir: The working directory for the tool. If None, the current working directory is used.
         allowlist: Patterns that automatically allow tool execution.
         denylist: Patterns that automatically deny tool execution.
+        model: Optional model alias to use for this specific tool.
         _vibe_config: Internal reference to full VibeConfig (injected by ToolManager).
     """
 
@@ -73,6 +74,7 @@ class BaseToolConfig(BaseModel):
     workdir: Path | None = Field(default=None, exclude=True)
     allowlist: list[str] = Field(default_factory=list)
     denylist: list[str] = Field(default_factory=list)
+    model: str | None = Field(default=None, description="Optional model alias to use for this specific tool")
     vibe_config: "VibeConfig | None" = Field(default=None, exclude=True)
 
     @field_validator("workdir", mode="before")
