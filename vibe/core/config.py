@@ -605,4 +605,5 @@ class VibeConfig(BaseSettings):
 
         return config_dict
 
+
 BaseToolConfig.model_rebuild()

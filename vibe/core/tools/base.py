@@ -7,11 +7,9 @@ import inspect
 from pathlib import Path
 import re
 import sys
-from typing import Any, ClassVar, cast, get_args, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vibe.core.config import VibeConfig
@@ -74,8 +72,10 @@ class BaseToolConfig(BaseModel):
     workdir: Path | None = Field(default=None, exclude=True)
     allowlist: list[str] = Field(default_factory=list)
     denylist: list[str] = Field(default_factory=list)
-    model: str | None = Field(default=None, description="Optional model alias to use for this specific tool")
-    vibe_config: "VibeConfig | None" = Field(default=None, exclude=True)
+    model: str | None = Field(
+        default=None, description="Optional model alias to use for this specific tool"
+    )
+    vibe_config: VibeConfig | None = Field(default=None, exclude=True)
 
     @field_validator("workdir", mode="before")
     @classmethod
@@ -111,7 +111,7 @@ class BaseTool[
         "Please gently meow at the developer to fix this.)"
     )
 
-    prompt_path: ClassVar[Path] | None = None
+    prompt_path: ClassVar[Path | None] = Field(default=None, exclude=True)
 
     def __init__(self, config: ToolConfig, state: ToolState) -> None:
         self.config = config

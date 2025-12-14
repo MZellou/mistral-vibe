@@ -7,13 +7,12 @@ if TYPE_CHECKING:
     from vibe.core.tools.ui import ToolResultDisplay
 
 from vibe.cli.textual_ui.widgets.tool_widgets import (
-    AskUserApprovalWidget,
     AskUserResultWidget,
-    InteractiveAskUserWidget,
     BashApprovalWidget,
     BashResultWidget,
     GrepApprovalWidget,
     GrepResultWidget,
+    InteractiveAskUserWidget,
     ReadFileApprovalWidget,
     ReadFileResultWidget,
     SearchReplaceApprovalWidget,

@@ -44,12 +44,10 @@ class ThinkConfig(BaseToolConfig):
         "If not set, uses the active model.",
     )
     timeout: float = Field(
-        default=120.0,
-        description="Timeout in seconds for the thinking request",
+        default=120.0, description="Timeout in seconds for the thinking request"
     )
     max_tokens: int = Field(
-        default=32768,
-        description="Maximum tokens for the response",
+        default=32768, description="Maximum tokens for the response"
     )
 
 
@@ -85,11 +83,13 @@ class Think(
         if not isinstance(event.args, ThinkArgs):
             return ToolCallDisplay(summary="Invalid arguments")
 
-        task_preview = event.args.task[:100] + "..." if len(event.args.task) > 100 else event.args.task
-        return ToolCallDisplay(
-            summary="Deep thinking",
-            details={"task": task_preview},
+        MAX_TASK_PREVIEW_LENGTH = 100
+        task_preview = (
+            event.args.task[:MAX_TASK_PREVIEW_LENGTH] + "..."
+            if len(event.args.task) > MAX_TASK_PREVIEW_LENGTH
+            else event.args.task
         )
+        return ToolCallDisplay(summary="Deep thinking", details={"task": task_preview})
 
     @classmethod
     def get_result_display(cls, event: ToolResultEvent) -> ToolResultDisplay:
@@ -106,14 +106,14 @@ class Think(
     def get_status_text(cls) -> str:
         return "Thinking deeply..."
 
-    def _get_vibe_config(self) -> "VibeConfig":
+    def _get_vibe_config(self) -> VibeConfig:
         """Get the injected VibeConfig or raise an error."""
-        if self.config._vibe_config is None:
+        if self.config.vibe_config is None:
             raise ToolError(
                 "Think tool requires VibeConfig to be injected. "
                 "This is a bug - please report it."
             )
-        return self.config._vibe_config
+        return self.config.vibe_config
 
     async def run(self, args: ThinkArgs) -> ThinkResult:
         vibe_config = self._get_vibe_config()
@@ -168,8 +168,4 @@ class Think(
             reasoning = "\n\n".join(paragraphs[:-1])
             conclusion = paragraphs[-1]
 
-        return ThinkResult(
-            task=args.task,
-            reasoning=reasoning,
-            conclusion=conclusion,
-        )
+        return ThinkResult(task=args.task, reasoning=reasoning, conclusion=conclusion)
