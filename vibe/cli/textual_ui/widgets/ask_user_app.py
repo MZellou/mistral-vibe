@@ -20,6 +20,7 @@ class AskUserApp(Container):
         Binding("up", "move_up", "Up", show=False),
         Binding("down", "move_down", "Down", show=False),
         Binding("enter", "select", "Select", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
     ]
 
     class ResponseSubmitted(Message):
@@ -52,9 +53,7 @@ class AskUserApp(Container):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="ask-user-content"):
-            self.title_widget = Static(
-                "🤖 AI Question", classes="ask-user-app-title"
-            )
+            self.title_widget = Static("🤖 AI Question", classes="ask-user-app-title")
             yield self.title_widget
 
             yield Static("")
@@ -80,8 +79,7 @@ class AskUserApp(Container):
 
             # Text input (shown when "Type something..." is selected or no options)
             self.text_input = Input(
-                placeholder="Type your answer here...",
-                classes="ask-user-app-input",
+                placeholder="Type your answer here...", classes="ask-user-app-input"
             )
             if not self.in_text_mode:
                 self.text_input.display = False
@@ -149,6 +147,11 @@ class AskUserApp(Container):
             # Submit the selected option
             response = self.all_options[self.selected_option]
             self.post_message(self.ResponseSubmitted(response))
+
+    def action_cancel(self) -> None:
+        """Cancel the ask_user operation."""
+        # Post a response with empty string to indicate cancellation
+        self.post_message(self.ResponseSubmitted(""))
 
     def on_blur(self, event: events.Blur) -> None:
         """Keep focus on this app."""

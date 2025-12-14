@@ -17,7 +17,7 @@ class VibeSessionMode(enum.StrEnum):
             case self.APPROVAL_REQUIRED:
                 return SessionMode(
                     id=VibeSessionMode.APPROVAL_REQUIRED,
-                    name="Normal Mode",
+                    name="Approval Required",
                     description="Requires user approval for tool executions",
                 )
             case self.AUTO_APPROVE:

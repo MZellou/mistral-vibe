@@ -11,10 +11,10 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from vibe.acp.utils import VibeSessionMode
-from vibe.core.config import VibeConfig
+from vibe.core.config import ModelConfig, VibeConfig
 from vibe.core.interaction_logger import InteractionLogger
 from vibe.core.llm.backend.factory import BACKEND_FACTORY
-from vibe.core.llm.format import APIToolFormatHandler, ResolvedMessage
+from vibe.core.llm.format import APIToolFormatHandler, ResolvedMessage, ResolvedToolCall
 from vibe.core.llm.types import BackendLike
 from vibe.core.middleware import (
     AutoCompactMiddleware,
@@ -85,10 +85,25 @@ class LLMResponseError(AgentError):
 
 
 # Outils autorisés en mode Plan (lecture seule)
-READ_ONLY_TOOLS = frozenset({"read_file", "grep", "think", "ask_user", "explore"})
+READ_ONLY_TOOLS = frozenset({
+    "read_file",
+    "grep",
+    "think",
+    "ask_user",
+    "explore",
+    "bash",
+})
 BASH_READ_ONLY_COMMANDS = frozenset({
-    "ls", "cat", "head", "tail", "pwd", "find",
-    "git status", "git log", "git diff", "git show"
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "pwd",
+    "find",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
 })
 
 
@@ -167,9 +182,7 @@ class Agent:
     def auto_approve(self, value: bool) -> None:
         """Backward compatibility setter."""
         self.mode = (
-            VibeSessionMode.AUTO_APPROVE
-            if value
-            else VibeSessionMode.APPROVAL_REQUIRED
+            VibeSessionMode.AUTO_APPROVE if value else VibeSessionMode.APPROVAL_REQUIRED
         )
 
     def _select_backend(self) -> BackendLike:
@@ -196,6 +209,32 @@ class Agent:
         self._clean_message_history()
         async for event in self._conversation_loop(msg):
             yield event
+
+    async def ask_user(self, question: str, options: list[str] | None = None) -> str:
+        """Ask user a question and get their response.
+
+        Args:
+            question: The question to ask
+            options: Optional list of response options
+
+        Returns:
+            The user's response
+
+        Raises:
+            ToolError: If ask_user tool is not available or fails
+        """
+        if "ask_user" not in self.tool_manager._available:
+            raise ToolError("ask_user tool not available")
+
+        ask_user_tool = self.tool_manager.get("ask_user")
+        if not ask_user_tool:
+            raise ToolError("ask_user tool not found")
+
+        try:
+            result = await ask_user_tool.invoke(question=question, options=options)
+            return result.get("response", "")
+        except Exception as e:
+            raise ToolError(f"Failed to ask user: {e}")
 
     def _setup_middleware(self, max_turns: int | None, max_price: float | None) -> None:
         self.middleware_pipeline.clear()
@@ -481,14 +520,79 @@ class Agent:
             # Traitement spécial pour bash - doit être en lecture seule
             if tool_name == "bash":
                 command = tool_args.get("command", "").strip()
-                if not any(command.startswith(safe) for safe in BASH_READ_ONLY_COMMANDS):
+                if not any(
+                    command.startswith(safe) for safe in BASH_READ_ONLY_COMMANDS
+                ):
                     return (
                         False,
                         f"Plan mode: bash command '{command}' is not read-only",
                     )
             return (True, None)
 
-        return (False, f"Plan mode: tool '{tool_name}' is write-protected in plan mode")
+        # Tool is write-protected - need to exit PLAN MODE
+        # Generate a summary of the plan and ask for approval
+        return (False, "Plan mode: tool requires approval to execute")
+
+    async def _handle_plan_approval(
+        self, tool_call: ResolvedToolCall, skip_reason: str | None
+    ) -> ToolResultEvent | None:
+        """Handle the user approval flow when in PLAN MODE.
+
+        Returns:
+            ToolResultEvent if the tool should be skipped/errored (user declined/revised/error),
+            None if approved and ready to execute (mode changed to APPROVAL_REQUIRED).
+        """
+        # Generate summary of the plan
+        try:
+            summary = await self.compact()
+
+            # Ask user to approve the plan
+            response = await self.ask_user(
+                f"Plan Summary:\n{summary}\n\nExecute this plan?",
+                ["Yes", "No", "Revise"],
+            )
+
+            if response == "Yes":
+                # Exit PLAN MODE and allow execution
+                self.mode = VibeSessionMode.APPROVAL_REQUIRED
+                return None
+            elif response == "Revise":
+                # Stay in PLAN MODE for revisions
+                self.messages.append(
+                    LLMMessage(
+                        role=Role.user,
+                        content="Plan revision requested. Staying in PLAN MODE.",
+                    )
+                )
+                return ToolResultEvent(
+                    tool_name=tool_call.tool_name,
+                    tool_class=tool_call.tool_class,
+                    error="Plan revision requested. Staying in PLAN MODE.",
+                    tool_call_id=tool_call.call_id,
+                )
+            else:
+                # User declined - stay in PLAN MODE
+                self.messages.append(
+                    LLMMessage(
+                        role=Role.user, content="Plan declined. Staying in PLAN MODE."
+                    )
+                )
+                return ToolResultEvent(
+                    tool_name=tool_call.tool_name,
+                    tool_class=tool_call.tool_class,
+                    error="Plan declined. Staying in PLAN MODE.",
+                    tool_call_id=tool_call.call_id,
+                )
+        except Exception as e:
+            # If summary/approval fails, fall back to error
+            error_msg = f"Failed to approve plan: {e}"
+            self.messages.append(LLMMessage(role=Role.user, content=error_msg))
+            return ToolResultEvent(
+                tool_name=tool_call.tool_name,
+                tool_class=tool_call.tool_class,
+                error=error_msg,
+                tool_call_id=tool_call.call_id,
+            )
 
     async def _handle_tool_calls(  # noqa: PLR0915
         self, resolved: ResolvedMessage
@@ -522,23 +626,38 @@ class Agent:
 
             # Check if tool is allowed in current mode
             allowed, skip_reason = self._is_tool_allowed_in_mode(
-                tool_call.tool_name, tool_call.validated_args
+                tool_call.tool_name, tool_call.args_dict
             )
             if not allowed:
-                yield ToolResultEvent(
-                    tool_name=tool_call.tool_name,
-                    tool_class=tool_call.tool_class,
-                    error=skip_reason,
-                    tool_call_id=tool_call_id,
-                )
-                self.messages.append(
-                    LLMMessage.model_validate(
-                        self.format_handler.create_tool_response_message(
-                            tool_call, skip_reason or "Tool not allowed"
+                # Special handling for PLAN MODE
+                if self.mode == VibeSessionMode.PLAN and "requires approval" in (
+                    skip_reason or ""
+                ):
+                    result_event = await self._handle_plan_approval(
+                        tool_call, skip_reason
+                    )
+                    if result_event:
+                        yield result_event
+                        continue
+                    else:
+                        # Approved, proceed to execution
+                        allowed = True
+                        skip_reason = None
+                else:
+                    # Regular skip reason
+                    yield ToolResultEvent(
+                        tool_name=tool_call.tool_name,
+                        tool_class=tool_call.tool_class,
+                        error=skip_reason,
+                        tool_call_id=tool_call_id,
+                    )
+                    # Add as user message to maintain proper ordering
+                    self.messages.append(
+                        LLMMessage(
+                            role=Role.user, content=skip_reason or "Tool not allowed"
                         )
                     )
-                )
-                continue
+                    continue
 
             try:
                 tool_instance = self.tool_manager.get(tool_call.tool_name)
@@ -687,7 +806,7 @@ class Agent:
 
     def _get_model_for_tool(self, tool_name: str) -> ModelConfig:
         """Get the appropriate model for a specific tool.
-        
+
         If the tool has a specific model configured, use that model.
         Otherwise, use the active model.
         """
@@ -698,7 +817,7 @@ class Agent:
         except ValueError:
             # If the configured model doesn't exist, fall back to active model
             pass
-        
+
         # Use active model as fallback
         return self.config.get_active_model()
 
@@ -707,7 +826,7 @@ class Agent:
         available_tools = self.format_handler.get_available_tools(
             self.tool_manager, self.config
         )
-        
+
         # Determine which model to use based on tool configurations
         model = self.config.get_active_model()
         for tool in available_tools:
@@ -718,7 +837,7 @@ class Agent:
                     break  # Use the first tool with a specific model
                 except ValueError:
                     continue
-        
+
         provider = self.config.get_provider_for_model(model)
 
         tool_choice = self.format_handler.get_tool_choice()

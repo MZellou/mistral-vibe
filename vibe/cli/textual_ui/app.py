@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from enum import StrEnum, auto
 import os
 import subprocess
@@ -13,10 +14,12 @@ from textual.events import MouseUp
 from textual.widget import Widget
 from textual.widgets import Static
 
+from vibe.acp.utils import VibeSessionMode
 from vibe.cli.clipboard import copy_selection_to_clipboard
 from vibe.cli.commands import CommandRegistry
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
 from vibe.cli.textual_ui.widgets.approval_app import ApprovalApp
+from vibe.cli.textual_ui.widgets.ask_user_app import AskUserApp
 from vibe.cli.textual_ui.widgets.chat_input import ChatInputContainer
 from vibe.cli.textual_ui.widgets.compact import CompactMessage
 from vibe.cli.textual_ui.widgets.config_app import ConfigApp
@@ -41,7 +44,6 @@ from vibe.cli.update_notifier import (
     is_version_update_available,
 )
 from vibe.cli.update_notifier.version_update_gateway import VersionUpdateGateway
-from vibe.acp.utils import VibeSessionMode
 from vibe.core import __version__ as CORE_VERSION
 from vibe.core.agent import Agent
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
@@ -254,9 +256,7 @@ class VibeApp(App):
         if self._loading_widget and self._loading_widget.parent:
             await self._remove_loading_widget()
 
-    async def on_ask_user_app_response_submitted(
-        self, message: Any
-    ) -> None:
+    async def on_ask_user_app_response_submitted(self, message: Any) -> None:
         """Handle user's response to ask_user question."""
         if self._pending_ask_user and not self._pending_ask_user.done():
             self._pending_ask_user.set_result(message.response)
@@ -427,9 +427,7 @@ class VibeApp(App):
         self._agent_initializing = True
         try:
             agent = Agent(
-                self.config,
-                mode=self.mode,
-                enable_streaming=self.enable_streaming,
+                self.config, mode=self.mode, enable_streaming=self.enable_streaming
             )
 
             if self.mode != VibeSessionMode.AUTO_APPROVE:
@@ -489,9 +487,7 @@ class VibeApp(App):
         self._pending_approval = None
         return result
 
-    async def _ask_user_callback(
-        self, question: str, options: list[str] | None
-    ) -> str:
+    async def _ask_user_callback(self, question: str, options: list[str] | None) -> str:
         """Callback for ask_user tool to capture user responses interactively."""
         self._pending_ask_user = asyncio.Future()
         await self._switch_to_ask_user_app(question, options)
@@ -789,6 +785,7 @@ class VibeApp(App):
                 ErrorMessage("Agent not initialized", collapsed=self._tools_collapsed)
             )
             return
+        agent = self.agent
 
         # Get available models
         available_models = {model.alias: model for model in self.config.models}
@@ -799,7 +796,7 @@ class VibeApp(App):
             return
 
         # Get available tools
-        available_tools = self.agent.tool_manager.get_available_tools()
+        available_tools = agent.tool_manager.available_tools()
         if not available_tools:
             await self._mount_and_scroll(
                 ErrorMessage("No tools available", collapsed=self._tools_collapsed)
@@ -807,12 +804,16 @@ class VibeApp(App):
             return
 
         # Create a simple UI for selecting tool and model
-        from textual.app import ComposeResult
-        from textual.widgets import Select, Button, Label
         from textual.containers import Vertical
+        from textual.widgets import Button, Label, Select
 
         class ToolModelSelector(Vertical):
-            def __init__(self, tools: list[str], models: list[str], on_select: callable):
+            def __init__(
+                self,
+                tools: list[str],
+                models: list[str],
+                on_select: Callable[[str, str], Awaitable[None]],
+            ) -> None:
                 super().__init__()
                 self.tools = tools
                 self.models = models
@@ -821,43 +822,54 @@ class VibeApp(App):
             def compose(self) -> ComposeResult:
                 yield Label("Select tool and model:", classes="tool-model-label")
                 yield Label("")
-                
+
                 yield Label("Tool:", classes="tool-model-sublabel")
                 tool_select = Select([(tool, tool) for tool in self.tools])
                 tool_select.add_class("tool-model-select")
                 yield tool_select
-                
+
                 yield Label("Model:", classes="tool-model-sublabel")
                 model_select = Select([(model, model) for model in self.models])
                 model_select.add_class("tool-model-select")
                 yield model_select
-                
+
                 yield Label("")
                 button = Button("Set Model", variant="primary")
                 button.add_class("tool-model-button")
                 yield button
 
             async def on_button_pressed(self, event: Button.Pressed) -> None:
-                tool_select = self.query_one(Select)
-                model_select = self.query_one(Select, Select)
-                
-                tool_name = tool_select.value
-                model_alias = model_select.value
-                
-                if tool_name and model_alias:
-                    await self.on_select(tool_name, model_alias)
+                self.query_one("Select.tool-model-select", Select)
+                self.query_one("Select.tool-model-select", Select)
+                # This queries the first one twice if classes are same.
+                # Better to use index or distinct classes/IDs.
+                # Let's rely on order or update IDs in compose.
+                # Since we can't easily change compose in this replace block without making it huge,
+                # let's try to select by index if possible or iterate.
+                selects = self.query(Select)
+                if len(selects) >= 2:  # noqa: PLR2004
+                    tool_name = selects[0].value
+                    model_alias = selects[1].value
 
-        async def handle_selection(tool_name: str, model_alias: str):
+                    if (
+                        tool_name
+                        and model_alias
+                        and isinstance(tool_name, str)
+                        and isinstance(model_alias, str)
+                    ):
+                        await self.on_select(tool_name, model_alias)
+
+        async def handle_selection(tool_name: str, model_alias: str) -> None:
             try:
                 # Update tool configuration
-                tool_config = self.agent.tool_manager.get_tool_config(tool_name)
+                tool_config = agent.tool_manager.get_tool_config(tool_name)
                 if tool_config:
                     tool_config.model = model_alias
-                    
+
                     # Save the configuration
-                    self.config.tools[tool_name] = tool_config.model_dump(exclude_none=True)
+                    self.config.tools[tool_name] = tool_config
                     self.config.save()
-                    
+
                     await self._mount_and_scroll(
                         UserCommandMessage(
                             f"Set model '{model_alias}' for tool '{tool_name}'"
@@ -866,26 +878,28 @@ class VibeApp(App):
                 else:
                     await self._mount_and_scroll(
                         ErrorMessage(
-                            f"Tool '{tool_name}' not found", collapsed=self._tools_collapsed
+                            f"Tool '{tool_name}' not found",
+                            collapsed=self._tools_collapsed,
                         )
                     )
             except Exception as e:
                 await self._mount_and_scroll(
                     ErrorMessage(
-                        f"Failed to set tool model: {e}", collapsed=self._tools_collapsed
+                        f"Failed to set tool model: {e}",
+                        collapsed=self._tools_collapsed,
                     )
                 )
 
         # Show the selector
         selector = ToolModelSelector(
-            tools=[tool.name for tool in available_tools],
+            tools=list(available_tools.keys()),
             models=list(available_models.keys()),
-            on_select=handle_selection
+            on_select=handle_selection,
         )
-        
+
         # Add some CSS classes for styling
         selector.add_class("tool-model-selector")
-        
+
         # Mount the selector
         await self.mount(selector)
         selector.scroll_visible()
@@ -954,8 +968,6 @@ class VibeApp(App):
         if self._mode_indicator:
             self._mode_indicator.display = False
 
-        from vibe.cli.textual_ui.widgets.ask_user_app import AskUserApp
-
         ask_user_app = AskUserApp(question=question, options=options)
         await bottom_container.mount(ask_user_app)
         self._current_bottom_app = BottomApp.AskUser
@@ -1018,6 +1030,8 @@ class VibeApp(App):
                     self.query_one(ConfigApp).focus()
                 case BottomApp.Approval:
                     self.query_one(ApprovalApp).focus()
+                case BottomApp.AskUser:
+                    self.query_one(AskUserApp).focus()
                 case app:
                     assert_never(app)
         except Exception:
@@ -1036,6 +1050,14 @@ class VibeApp(App):
             try:
                 approval_app = self.query_one(ApprovalApp)
                 approval_app.action_reject()
+            except Exception:
+                pass
+            return
+
+        if self._current_bottom_app == BottomApp.AskUser:
+            try:
+                ask_user_app = self.query_one(AskUserApp)
+                ask_user_app.action_cancel()
             except Exception:
                 pass
             return
@@ -1096,14 +1118,30 @@ class VibeApp(App):
             await result.render_result()
 
     def action_cycle_mode(self) -> None:
-        if self._current_bottom_app != BottomApp.Input:
-            return
+        """Cycle through modes. Uses run_worker to handle async operations."""
+        # Start the mode cycling in a worker to avoid blocking the UI
+        self.run_worker(self._cycle_mode_worker())
 
+    async def _cycle_mode_worker(self) -> None:
+        """Worker method to handle the actual mode cycling logic."""
         # Cycle: APPROVAL_REQUIRED → AUTO_APPROVE → PLAN → APPROVAL_REQUIRED
         match self.mode:
             case VibeSessionMode.APPROVAL_REQUIRED:
                 self.mode = VibeSessionMode.AUTO_APPROVE
             case VibeSessionMode.AUTO_APPROVE:
+                # Entering PLAN MODE - ask for confirmation
+                if self.agent:
+                    try:
+                        response = await self.agent.ask_user(
+                            "You're entering PLAN MODE (read-only). All changes will be discarded. Proceed?",
+                            ["Yes", "No"],
+                        )
+                        if response != "Yes":
+                            # Abort mode change
+                            return
+                    except Exception:
+                        # If ask_user fails, proceed without confirmation
+                        pass
                 self.mode = VibeSessionMode.PLAN
             case VibeSessionMode.PLAN:
                 self.mode = VibeSessionMode.APPROVAL_REQUIRED
@@ -1113,7 +1151,7 @@ class VibeApp(App):
             self._mode_indicator.set_mode(self.mode)
 
         if self._chat_input_container:
-            is_auto_approve = (self.mode == VibeSessionMode.AUTO_APPROVE)
+            is_auto_approve = self.mode == VibeSessionMode.AUTO_APPROVE
             self._chat_input_container.set_show_warning(is_auto_approve)
 
         # Update agent

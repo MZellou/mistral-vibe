@@ -6,7 +6,9 @@ from vibe.acp.utils import VibeSessionMode
 
 
 class ModeIndicator(Static):
-    def __init__(self, mode: VibeSessionMode = VibeSessionMode.APPROVAL_REQUIRED) -> None:
+    def __init__(
+        self, mode: VibeSessionMode = VibeSessionMode.APPROVAL_REQUIRED
+    ) -> None:
         super().__init__()
         self.can_focus = False
         self._mode = mode
@@ -21,7 +23,7 @@ class ModeIndicator(Static):
                 self.update("⏸ plan mode (shift+tab to cycle)")
                 self.set_classes("mode-plan")
             case VibeSessionMode.APPROVAL_REQUIRED:
-                self.update("⏵ normal (shift+tab to cycle)")
+                self.update("⏵ auto-approve off (shift+tab to cycle)")
                 self.set_classes("mode-off")
 
     def set_mode(self, mode: VibeSessionMode) -> None:

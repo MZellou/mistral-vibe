@@ -36,10 +36,7 @@ class BaseSnapshotTestApp(VibeApp):
         super().__init__(config=config, **kwargs)
 
         self.agent = Agent(
-            config,
-            auto_approve=self.auto_approve,
-            enable_streaming=self.enable_streaming,
-            backend=FakeBackend(),
+            config, enable_streaming=self.enable_streaming, backend=FakeBackend()
         )
 
     async def on_mount(self) -> None:

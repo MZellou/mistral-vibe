@@ -101,7 +101,7 @@ class TestACPNewSession:
         assert session_response.modes is not None
         assert session_response.modes.currentModeId is not None
         assert session_response.modes.availableModes is not None
-        assert len(session_response.modes.availableModes) == 2
+        assert len(session_response.modes.availableModes) == 3
 
         assert session_response.modes.currentModeId == VibeSessionMode.APPROVAL_REQUIRED
         assert (
