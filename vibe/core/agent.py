@@ -92,6 +92,7 @@ READ_ONLY_TOOLS = frozenset({
     "ask_user",
     "explore",
     "bash",
+    "todo",
 })
 BASH_READ_ONLY_COMMANDS = frozenset({
     "ls",

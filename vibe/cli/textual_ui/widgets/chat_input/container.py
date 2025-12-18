@@ -150,8 +150,12 @@ class ChatInputContainer(Vertical):
     def set_show_warning(self, show_warning: bool) -> None:
         self._show_warning = show_warning
 
-        input_box = self.get_widget_by_id(self.ID_INPUT_BOX)
-        if show_warning:
-            input_box.add_class(self.BORDER_WARNING_CLASS)
-        else:
-            input_box.remove_class(self.BORDER_WARNING_CLASS)
+        try:
+            input_box = self.get_widget_by_id(self.ID_INPUT_BOX)
+            if show_warning:
+                input_box.add_class(self.BORDER_WARNING_CLASS)
+            else:
+                input_box.remove_class(self.BORDER_WARNING_CLASS)
+        except Exception:
+            # Widget is unmounted during dialog transitions, silently ignore
+            pass

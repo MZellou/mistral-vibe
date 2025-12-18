@@ -917,6 +917,7 @@ class VibeApp(App):
         try:
             chat_input_container = self.query_one(ChatInputContainer)
             await chat_input_container.remove()
+            self._chat_input_container = None
         except Exception:
             pass
 
@@ -935,6 +936,7 @@ class VibeApp(App):
         try:
             chat_input_container = self.query_one(ChatInputContainer)
             await chat_input_container.remove()
+            self._chat_input_container = None
         except Exception:
             pass
 
@@ -962,6 +964,7 @@ class VibeApp(App):
         try:
             chat_input_container = self.query_one(ChatInputContainer)
             await chat_input_container.remove()
+            self._chat_input_container = None
         except Exception:
             pass
 
@@ -1150,7 +1153,7 @@ class VibeApp(App):
         if self._mode_indicator:
             self._mode_indicator.set_mode(self.mode)
 
-        if self._chat_input_container:
+        if self._current_bottom_app == BottomApp.Input and self._chat_input_container:
             is_auto_approve = self.mode == VibeSessionMode.AUTO_APPROVE
             self._chat_input_container.set_show_warning(is_auto_approve)
 
